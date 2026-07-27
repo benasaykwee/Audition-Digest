@@ -13,8 +13,11 @@ This is meant to run standalone, outside of any Claude chat. See
 Required environment variables (set as GitHub repo secrets, never
 committed to the repo):
     ANTHROPIC_API_KEY   Claude API key, from console.anthropic.com
-    GMAIL_ADDRESS        the Gmail address sending AND receiving the digest
-    GMAIL_APP_PASSWORD   the Gmail app password (NOT the account password)
+    GMAIL_ADDRESS        the Gmail account that logs in and SENDS the digest
+                          (this is the one with the app password below)
+    GMAIL_APP_PASSWORD   the app password for GMAIL_ADDRESS (NOT its account password)
+    GMAIL_RECIPIENT       the Gmail address the digest actually gets sent TO
+                          (a different address from GMAIL_ADDRESS, on purpose)
 
 --- Known rough edge, read before the first live run ---
 The BroadwayWorld and Playbill parsers below were written from a cleaned
@@ -321,20 +324,24 @@ Sources: {sources_used}. NYCastings and Mandy.com aren't in this feed yet, both 
 
 
 def send_email(html, subject):
-    gmail_address = os.environ["GMAIL_ADDRESS"]
+    # GMAIL_ADDRESS is the sending account only, it logs in and sends but
+    # is never the destination. GMAIL_RECIPIENT is where the digest actually
+    # lands. These are deliberately two different Gmail accounts.
+    sender_address = os.environ["GMAIL_ADDRESS"]
     app_password = os.environ["GMAIL_APP_PASSWORD"]
+    recipient_address = os.environ["GMAIL_RECIPIENT"]
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = gmail_address
-    msg["To"] = gmail_address
+    msg["From"] = sender_address
+    msg["To"] = recipient_address
     msg.attach(MIMEText("This email requires HTML to view. Open it in a normal email client.", "plain"))
     msg.attach(MIMEText(html, "html"))
 
     with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(gmail_address, app_password)
+        server.login(sender_address, app_password)
         server.send_message(msg)
-    log(f"Sent digest to {gmail_address}")
+    log(f"Sent digest from {sender_address} to {recipient_address}")
 
 
 def main():
