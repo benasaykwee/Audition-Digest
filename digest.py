@@ -58,6 +58,11 @@ HEADERS = {
 BROADWAYWORLD_URL = "https://www.broadwayworld.com/theatre-auditions/"
 PLAYBILL_URL = "https://playbill.com/jobs"
 
+# Where the interactive pick-list page lives once GitHub Pages is turned on
+# for this repo (Settings > Pages > Deploy from a branch > main > /docs).
+PAGE_URL = "https://benasaykwee.github.io/Audition-Digest/"
+PAGE_PATH = "docs/index.html"  # relative to the repo root, must match Pages source
+
 # BroadwayWorld role types that are never a performer audition. Dropped
 # before classification runs, since this is a plain category check, not
 # a judgment call.
@@ -89,10 +94,8 @@ If a listing is ambiguous, keep it, mark it ambiguous, and explain why you weren
 Return a JSON array only, no other text, one object per listing, in the same order as given. The "decision" field must be exactly the string "keep" or the string "exclude", no other values:
 [{"id": 1, "decision": "keep", "ambiguous": false, "reason": "one sentence"}, ...]"""
 
-
 def log(msg):
     print(f"[digest] {msg}", file=sys.stderr)
-
 
 def fetch_broadwayworld():
     """Returns a list of listing dicts pulled from BroadwayWorld's audition board."""
@@ -148,7 +151,6 @@ def fetch_broadwayworld():
     log(f"BroadwayWorld: parsed {len(listings)} performer listings")
     return listings
 
-
 def fetch_playbill():
     """Returns a list of listing dicts pulled from Playbill's job board, Performer category only."""
     resp = requests.get(PLAYBILL_URL, headers=HEADERS, timeout=30)
@@ -198,7 +200,6 @@ def fetch_playbill():
     log(f"Playbill: parsed {len(listings)} performer-category listings")
     return listings
 
-
 def drop_expired(listings, today):
     kept = []
     for item in listings:
@@ -208,7 +209,6 @@ def drop_expired(listings, today):
         kept.append(item)
     return kept
 
-
 def parse_date(s):
     if not s:
         return None
@@ -217,9 +217,7 @@ def parse_date(s):
     except ValueError:
         return None
 
-
 BATCH_SIZE = 40  # keeps each classifier call's output well under the token cap
-
 
 def classify_batch(client, batch, start_index):
     """Classifies one batch of listings (already-1-indexed relative to the
@@ -256,7 +254,6 @@ def classify_batch(client, batch, start_index):
 
     return {d["id"]: d for d in decisions}
 
-
 def classify(listings):
     """Calls the Claude API in batches (to keep each response well under the
     output token cap) and returns the same listings, each with 'decision',
@@ -282,7 +279,6 @@ def classify(listings):
         f"{sum(1 for i in listings if i.get('ambiguous'))} ambiguous")
     return listings
 
-
 def meta_line(item):
     parts = [item["role"]]
     if item["location"]:
@@ -291,28 +287,27 @@ def meta_line(item):
     parts.append(item["source"])
     return " &middot; ".join(parts)
 
-
 def listing_html(item):
     return f"""<p style="margin:0 0 14px;"><b style="color:#c9a227;">{item['title']}</b>{' — ' + item['company'] if item['company'] else ''}<br>
 <span style="color:#8f8878;font-size:12px;">{meta_line(item)}</span><br>
 <i style="color:#7a9d8a;font-size:12px;">{item['reason']}</i></p>"""
 
-
 def borderline_html(item):
     where = item["company"] or item["location"] or item["source"]
     return f"""<p style="margin:0 0 10px;color:#c9bfae;font-size:12px;line-height:1.5;"><b style="color:#e0d3b0;">{item['title']}</b> ({where}) &mdash; {item['reason']}</p>"""
 
-
 def render_html(this_week, upcoming, borderline, week_of, sources_used):
-    this_week_html = "\n".join(listing_html(i) for i in this_week) or "<p style=\"color:#8f8878;font-size:13px;\">Nothing this week.</p>"
-    upcoming_html = "\n".join(listing_html(i) for i in upcoming) or "<p style=\"color:#8f8878;font-size:13px;\">Nothing further out yet.</p>"
-    borderline_html_block = "\n".join(borderline_html(i) for i in borderline)
-    borderline_section = f"""<tr><td style="padding:20px 28px 0;">
-<div style="border:1px solid #5c1a1a;padding:14px 16px;background:#1f1512;">
-<div style="color:#a5514f;font-size:13px;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Borderline &mdash; worth a second look</div>
-{borderline_html_block}
-</div>
-</td></tr>""" if borderline else ""
+    """The email itself. Deliberately short: a count and a link to the
+    interactive pick-list page (render_listing_page), rather than every
+    listing inline, since a wall of ~150 listings in an inbox is the
+    overwhelming thing this page exists to fix."""
+    total = len(this_week) + len(upcoming)
+    urgent = sum(1 for i in this_week if parse_date(i["deadline"]) == date.today())
+
+    urgent_line = (
+        f'<div style="color:#a5514f;font-size:13px;margin-top:10px;">{urgent} of these close TODAY.</div>'
+        if urgent else ""
+    )
 
     return f"""<div style="background:#14100f;padding:24px 0;font-family:Georgia,'Times New Roman',serif;">
 <table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;margin:0 auto;background:#1a1614;border:1px solid #c9a227;">
@@ -321,28 +316,166 @@ def render_html(this_week, upcoming, borderline, week_of, sources_used):
 <div style="color:#c9a227;font-size:28px;letter-spacing:1px;">The Audition Digest</div>
 <div style="color:#8f6b6b;font-size:13px;margin-top:8px;font-style:italic;">Week of {week_of}</div>
 </td></tr>
-<tr><td style="padding:20px 28px 4px;color:#c9bfae;font-size:13px;line-height:1.6;">
-{len(this_week) + len(upcoming)} listings made it through this week, pulled from {sources_used}.
+<tr><td style="padding:28px 28px 8px;text-align:center;color:#ece6da;font-size:16px;line-height:1.6;">
+{total} listings made it through this week, {len(borderline)} flagged as borderline, pulled from {sources_used}.
+{urgent_line}
 </td></tr>
-<tr><td style="padding:18px 28px 0;">
-<div style="color:#2f6f52;font-size:14px;letter-spacing:2px;text-transform:uppercase;border-bottom:1px solid #2f6f52;padding-bottom:6px;">This week</div>
+<tr><td style="padding:16px 28px 28px;text-align:center;">
+<a href="{PAGE_URL}" style="display:inline-block;background:#c9a227;color:#1a1614;font-family:Georgia,serif;font-size:15px;font-weight:bold;text-decoration:none;padding:14px 28px;border:1px solid #8a7350;">Open this week's listings</a>
 </td></tr>
-<tr><td style="padding:12px 28px 0;color:#ece6da;font-size:14px;line-height:1.5;">
-{this_week_html}
-</td></tr>
-<tr><td style="padding:18px 28px 0;">
-<div style="color:#2f6f52;font-size:14px;letter-spacing:2px;text-transform:uppercase;border-bottom:1px solid #2f6f52;padding-bottom:6px;">Upcoming</div>
-</td></tr>
-<tr><td style="padding:12px 28px 0;color:#ece6da;font-size:14px;line-height:1.5;">
-{upcoming_html}
-</td></tr>
-{borderline_section}
-<tr><td style="padding:20px 28px 24px;color:#6b6355;font-size:11px;line-height:1.6;border-top:1px solid #3a332c;margin-top:10px;">
-Sources: {sources_used}. NYCastings and Mandy.com aren't in this feed yet, both need a headless-browser fetch. Stage manager postings and non-performer categories were filtered out before classification ran.
+<tr><td style="padding:0 28px 24px;color:#6b6355;font-size:11px;line-height:1.6;border-top:1px solid #3a332c;padding-top:16px;">
+That page lets you check off what you want to pursue and dismiss the rest, then email yourself just your picks. Sources: {sources_used}. NYCastings and Mandy.com aren't in this feed yet, both need a headless-browser fetch.
 </td></tr>
 </table>
 </div>"""
 
+def render_listing_page(this_week, upcoming, borderline, week_of, sources_used, recipient_address):
+    """The full interactive checklist page, published to GitHub Pages
+    (see PAGE_URL / PAGE_PATH). Plain HTML/CSS/JS, no build step, no
+    external libraries, so it keeps working with nothing to maintain.
+
+    Each listing gets a checkbox ("I'm interested") and a dismiss button
+    ("not for me"). Picks and dismissals are remembered per-week in the
+    browser's local storage, so reloading the page during the week doesn't
+    lose progress. "Email my picks" builds a plain-text summary of the
+    checked items and hands off to the browser's own mail client, same
+    inbox Quest Board already watches, no new integration needed."""
+
+    def row(item, idx):
+        where = item["company"] or item["location"] or item["source"]
+        return f"""<div class="listing" data-key="{idx}" data-title="{html_attr(item['title'])}" data-where="{html_attr(where)}" data-deadline="{html_attr(item['deadline'])}" data-url="{html_attr(item['url'])}">
+  <div class="row-top">
+    <label class="pick-label"><input type="checkbox" class="pick"> <span class="pick-title">{item['title']}</span>{' <span class="pick-company">— ' + item['company'] + '</span>' if item['company'] else ''}</label>
+    <button type="button" class="dismiss" title="Not for me">dismiss</button>
+  </div>
+  <div class="meta">{meta_line(item)}</div>
+  <div class="reason">{item['reason']}</div>
+</div>"""
+
+    this_week_html = "\n".join(row(i, f"tw{n}") for n, i in enumerate(this_week)) or '<p class="empty">Nothing this week.</p>'
+    upcoming_html = "\n".join(row(i, f"up{n}") for n, i in enumerate(upcoming)) or '<p class="empty">Nothing further out yet.</p>'
+    borderline_html_block = "\n".join(row(i, f"bl{n}") for n, i in enumerate(borderline)) or '<p class="empty">Nothing borderline this week.</p>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audition Digest — week of {week_of}</title>
+<style>
+  body {{ background:#14100f; color:#ece6da; font-family:Georgia,'Times New Roman',serif; margin:0; padding:24px 16px 80px; }}
+  .wrap {{ max-width:640px; margin:0 auto; }}
+  header {{ text-align:center; border-bottom:1px solid #c9a227; padding-bottom:20px; margin-bottom:20px; }}
+  .tagline {{ color:#8a7350; font-size:11px; letter-spacing:4px; text-transform:uppercase; margin-bottom:8px; }}
+  h1 {{ color:#c9a227; font-size:28px; letter-spacing:1px; margin:0; }}
+  .weekof {{ color:#8f6b6b; font-size:13px; margin-top:8px; font-style:italic; }}
+  .picks-bar {{ position:sticky; top:0; background:#1a1614; border:1px solid #c9a227; padding:12px 16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }}
+  .picks-count {{ color:#ece6da; font-size:14px; }}
+  .picks-count b {{ color:#c9a227; }}
+  button.send {{ background:#c9a227; color:#1a1614; font-family:Georgia,serif; font-size:14px; font-weight:bold; border:1px solid #8a7350; padding:10px 18px; cursor:pointer; }}
+  button.send:disabled {{ opacity:0.4; cursor:default; }}
+  h2 {{ color:#2f6f52; font-size:15px; letter-spacing:2px; text-transform:uppercase; border-bottom:1px solid #2f6f52; padding-bottom:6px; margin:28px 0 12px; }}
+  .listing {{ border:1px solid #3a332c; padding:12px 14px; margin-bottom:10px; background:#1a1614; }}
+  .listing.picked {{ border-color:#c9a227; background:#231c14; }}
+  .listing.dismissed {{ display:none; }}
+  .row-top {{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }}
+  .pick-label {{ display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:15px; }}
+  .pick-label input {{ margin-top:4px; }}
+  .pick-title {{ color:#c9a227; }}
+  .pick-company {{ color:#ece6da; }}
+  .dismiss {{ background:none; border:1px solid #5c1a1a; color:#a5514f; font-size:11px; padding:4px 10px; cursor:pointer; white-space:nowrap; }}
+  .meta {{ color:#8f8878; font-size:12px; margin:6px 0 4px 24px; }}
+  .reason {{ color:#7a9d8a; font-size:12px; font-style:italic; margin-left:24px; }}
+  .empty {{ color:#8f8878; font-size:13px; }}
+  .borderline h2 {{ color:#a5514f; border-color:#5c1a1a; }}
+  footer {{ color:#6b6355; font-size:11px; line-height:1.6; border-top:1px solid #3a332c; padding-top:16px; margin-top:32px; }}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="tagline">Weekly casting notes</div>
+  <h1>The Audition Digest</h1>
+  <div class="weekof">Week of {week_of}</div>
+</header>
+
+<div class="picks-bar">
+  <div class="picks-count"><b id="pick-count">0</b> picked so far</div>
+  <button type="button" class="send" id="send-btn" disabled>Email my picks</button>
+</div>
+
+<h2>This week</h2>
+{this_week_html}
+
+<h2>Upcoming</h2>
+{upcoming_html}
+
+<div class="borderline">
+<h2>Borderline — worth a second look</h2>
+{borderline_html_block}
+</div>
+
+<footer>
+Sources: {sources_used}. Check things off as you go, they'll stay checked if you come back to this page later this week. "Email my picks" sends a plain list to {recipient_address}, the same inbox Quest Board reads from.
+</footer>
+</div>
+
+<script>
+(function() {{
+  var weekKey = "digest-{week_of}".replace(/[^a-zA-Z0-9]/g, "-");
+  var recipient = {recipient_address!r};
+
+  function storageKey(el) {{ return weekKey + ":" + el.dataset.key; }}
+
+  function updateCount() {{
+    var picked = document.querySelectorAll(".listing .pick:checked").length;
+    document.getElementById("pick-count").textContent = picked;
+    document.getElementById("send-btn").disabled = picked === 0;
+  }}
+
+  document.querySelectorAll(".listing").forEach(function(el) {{
+    var saved = localStorage.getItem(storageKey(el));
+    var checkbox = el.querySelector(".pick");
+    if (saved === "picked") {{
+      checkbox.checked = true;
+      el.classList.add("picked");
+    }} else if (saved === "dismissed") {{
+      el.classList.add("dismissed");
+    }}
+
+    checkbox.addEventListener("change", function() {{
+      el.classList.toggle("picked", checkbox.checked);
+      localStorage.setItem(storageKey(el), checkbox.checked ? "picked" : "");
+      updateCount();
+    }});
+
+    el.querySelector(".dismiss").addEventListener("click", function() {{
+      el.classList.add("dismissed");
+      localStorage.setItem(storageKey(el), "dismissed");
+      updateCount();
+    }});
+  }});
+
+  document.getElementById("send-btn").addEventListener("click", function() {{
+    var lines = [];
+    document.querySelectorAll(".listing .pick:checked").forEach(function(cb) {{
+      var el = cb.closest(".listing");
+      lines.push("- " + el.dataset.title + " (" + el.dataset.where + ") — deadline " + (el.dataset.deadline || "n/a") + (el.dataset.url ? " — " + el.dataset.url : ""));
+    }});
+    var subject = "My audition picks — week of {week_of}";
+    var body = "Picked from this week's audition digest:\\n\\n" + lines.join("\\n");
+    window.location.href = "mailto:" + recipient + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  }});
+
+  updateCount();
+}})();
+</script>
+</body>
+</html>"""
+
+def html_attr(s):
+    """Minimal escaping for values placed inside HTML attributes."""
+    return (s or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
 
 def send_email(html, subject):
     # GMAIL_ADDRESS is the sending account only, it logs in and sends but
@@ -363,7 +496,6 @@ def send_email(html, subject):
         server.login(sender_address, app_password)
         server.send_message(msg)
     log(f"Sent digest from {sender_address} to {recipient_address}")
-
 
 def main():
     today = date.today()
@@ -387,11 +519,17 @@ def main():
     upcoming = [i for i in kept if not in_this_week(i)]
 
     sources_used = ", ".join(sorted(set(i["source"] for i in all_listings))) or "no sources"
-    html = render_html(this_week, upcoming, borderline, week_of, sources_used)
+    recipient_address = os.environ["GMAIL_RECIPIENT"]
 
+    page_html = render_listing_page(this_week, upcoming, borderline, week_of, sources_used, recipient_address)
+    os.makedirs(os.path.dirname(PAGE_PATH), exist_ok=True)
+    with open(PAGE_PATH, "w", encoding="utf-8") as f:
+        f.write(page_html)
+    log(f"Wrote pick-list page to {PAGE_PATH}")
+
+    email_html = render_html(this_week, upcoming, borderline, week_of, sources_used)
     subject = f"Audition Digest — week of {week_of}"
-    send_email(html, subject)
-
+    send_email(email_html, subject)
 
 if __name__ == "__main__":
     main()
