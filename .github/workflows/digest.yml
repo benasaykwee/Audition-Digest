@@ -1,0 +1,31 @@
+name: Audition Digest
+
+on:
+  schedule:
+    # 12:00 UTC every Sunday = 8am Eastern (Daylight Time) / 7am Eastern (Standard Time).
+    # GitHub's cron is always UTC and doesn't shift for daylight saving,
+    # so the actual local delivery time drifts by an hour twice a year.
+    - cron: "0 12 * * 0"
+  workflow_dispatch: {}   # adds a "Run workflow" button in the Actions tab, for manual test runs
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python digest.py
