@@ -86,7 +86,7 @@ Keep everything else. That includes calls that don't mention gender, mixed-gende
 
 If a listing is ambiguous, keep it, mark it ambiguous, and explain why you weren't sure, rather than silently dropping something that might matter.
 
-Return a JSON array only, no other text, one object per listing, in the same order as given:
+Return a JSON array only, no other text, one object per listing, in the same order as given. The "decision" field must be exactly the string "keep" or the string "exclude", no other values:
 [{"id": 1, "decision": "keep", "ambiguous": false, "reason": "one sentence"}, ...]"""
 
 
