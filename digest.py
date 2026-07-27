@@ -218,24 +218,22 @@ def parse_date(s):
         return None
 
 
-def classify(listings):
-    """Calls the Claude API once with the whole batch. Returns the same
-    listings, each with 'decision', 'ambiguous', and 'reason' added."""
-    if not listings:
-        return []
+BATCH_SIZE = 40  # keeps each classifier call's output well under the token cap
 
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
+def classify_batch(client, batch, start_index):
+    """Classifies one batch of listings (already-1-indexed relative to the
+    full list via start_index). Returns {absolute_index: decision_dict}."""
     numbered = "\n".join(
-        f"{i+1}. Title: {item['title']} | Company: {item['company']} | "
+        f"{start_index + i}. Title: {item['title']} | Company: {item['company']} | "
         f"Role: {item['role']} | Location: {item['location']} | "
         f"Deadline: {item['deadline']}"
-        for i, item in enumerate(listings)
+        for i, item in enumerate(batch)
     )
 
     response = client.messages.create(
         model="claude-sonnet-4-5",
-        max_tokens=4096,
+        max_tokens=8192,
         system=CLASSIFIER_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": numbered}],
     )
@@ -245,11 +243,34 @@ def classify(listings):
     try:
         decisions = json.loads(raw)
     except json.JSONDecodeError:
-        # model sometimes wraps JSON in a code fence despite instructions
-        cleaned = re.sub(r"^```(json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
-        decisions = json.loads(cleaned)
+        try:
+            # model sometimes wraps JSON in a code fence despite instructions
+            cleaned = re.sub(r"^```(json)?|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+            decisions = json.loads(cleaned)
+        except json.JSONDecodeError:
+            # log a chunk of the raw response so a future failure is debuggable
+            # from the Actions log alone, without needing another round trip
+            log(f"Classifier returned unparseable JSON for batch starting at {start_index}. "
+                f"First 500 chars: {raw[:500]!r}")
+            raise
 
-    by_id = {d["id"]: d for d in decisions}
+    return {d["id"]: d for d in decisions}
+
+
+def classify(listings):
+    """Calls the Claude API in batches (to keep each response well under the
+    output token cap) and returns the same listings, each with 'decision',
+    'ambiguous', and 'reason' added."""
+    if not listings:
+        return []
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+    by_id = {}
+    for start in range(0, len(listings), BATCH_SIZE):
+        batch = listings[start : start + BATCH_SIZE]
+        by_id.update(classify_batch(client, batch, start + 1))
+
     for i, item in enumerate(listings):
         d = by_id.get(i + 1, {"decision": "keep", "ambiguous": True, "reason": "No classifier response for this item."})
         item["decision"] = d.get("decision", "keep")
