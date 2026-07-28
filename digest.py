@@ -107,10 +107,19 @@ def fetch_broadwayworld():
 
     listings = []
     seen = set()
+    seen_urls = set()
     for link in soup.find_all("a", href=re.compile(r"/equity-audition/")):
         title = link.get_text(strip=True)
         href = link.get("href", "")
         if not title or not href:
+            continue
+
+        # Every BroadwayWorld posting has a second anchor next to the real
+        # one: a "Get audition information" call-to-action link pointing at
+        # the exact same posting. Left in, it doubles every single listing
+        # (confirmed live on 2026-07-28, ~150 real listings became ~300).
+        # Skip it here so it's never treated as a second, distinct listing.
+        if title.lower().startswith("get audition information"):
             continue
 
         # The company/role/location/deadline line sits near the title link
@@ -132,10 +141,14 @@ def fetch_broadwayworld():
         if len(parts) > 2:
             location = re.sub(r"\s*\d{1,2}/\d{1,2}/\d{4}\s*$", "", parts[2]).strip()
 
+        # Belt-and-suspenders: also dedup by the raw href. If BroadwayWorld
+        # ever changes the CTA link's wording, two links sharing a URL still
+        # won't produce two listings.
         key = (title, company, role, deadline)
-        if key in seen:
+        if key in seen or href in seen_urls:
             continue
         seen.add(key)
+        seen_urls.add(href)
 
         if any(s in role.lower() for s in BWW_DROP_ROLE_SUBSTRINGS):
             continue  # pre-filter: not a performer role, skip before classifying
