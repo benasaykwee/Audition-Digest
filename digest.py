@@ -94,8 +94,10 @@ If a listing is ambiguous, keep it, mark it ambiguous, and explain why you weren
 Return a JSON array only, no other text, one object per listing, in the same order as given. The "decision" field must be exactly the string "keep" or the string "exclude", no other values:
 [{"id": 1, "decision": "keep", "ambiguous": false, "reason": "one sentence"}, ...]"""
 
+
 def log(msg):
     print(f"[digest] {msg}", file=sys.stderr)
+
 
 def fetch_broadwayworld():
     """Returns a list of listing dicts pulled from BroadwayWorld's audition board."""
@@ -151,6 +153,7 @@ def fetch_broadwayworld():
     log(f"BroadwayWorld: parsed {len(listings)} performer listings")
     return listings
 
+
 def fetch_playbill():
     """Returns a list of listing dicts pulled from Playbill's job board, Performer category only."""
     resp = requests.get(PLAYBILL_URL, headers=HEADERS, timeout=30)
@@ -200,6 +203,7 @@ def fetch_playbill():
     log(f"Playbill: parsed {len(listings)} performer-category listings")
     return listings
 
+
 def drop_expired(listings, today):
     kept = []
     for item in listings:
@@ -209,6 +213,7 @@ def drop_expired(listings, today):
         kept.append(item)
     return kept
 
+
 def parse_date(s):
     if not s:
         return None
@@ -217,7 +222,9 @@ def parse_date(s):
     except ValueError:
         return None
 
+
 BATCH_SIZE = 40  # keeps each classifier call's output well under the token cap
+
 
 def classify_batch(client, batch, start_index):
     """Classifies one batch of listings (already-1-indexed relative to the
@@ -254,6 +261,7 @@ def classify_batch(client, batch, start_index):
 
     return {d["id"]: d for d in decisions}
 
+
 def classify(listings):
     """Calls the Claude API in batches (to keep each response well under the
     output token cap) and returns the same listings, each with 'decision',
@@ -279,6 +287,7 @@ def classify(listings):
         f"{sum(1 for i in listings if i.get('ambiguous'))} ambiguous")
     return listings
 
+
 def meta_line(item):
     parts = [item["role"]]
     if item["location"]:
@@ -287,14 +296,17 @@ def meta_line(item):
     parts.append(item["source"])
     return " &middot; ".join(parts)
 
+
 def listing_html(item):
     return f"""<p style="margin:0 0 14px;"><b style="color:#c9a227;">{item['title']}</b>{' — ' + item['company'] if item['company'] else ''}<br>
 <span style="color:#8f8878;font-size:12px;">{meta_line(item)}</span><br>
 <i style="color:#7a9d8a;font-size:12px;">{item['reason']}</i></p>"""
 
+
 def borderline_html(item):
     where = item["company"] or item["location"] or item["source"]
     return f"""<p style="margin:0 0 10px;color:#c9bfae;font-size:12px;line-height:1.5;"><b style="color:#e0d3b0;">{item['title']}</b> ({where}) &mdash; {item['reason']}</p>"""
+
 
 def render_html(this_week, upcoming, borderline, week_of, sources_used):
     """The email itself. Deliberately short: a count and a link to the
@@ -329,7 +341,8 @@ That page lets you check off what you want to pursue and dismiss the rest, then 
 </table>
 </div>"""
 
-def render_listing_page(this_week, upcoming, borderline, week_of, sources_used, recipient_address):
+
+def render_listing_page(this_week, upcoming, borderline, week_of, sources_used, mailto_recipients, display_recipients):
     """The full interactive checklist page, published to GitHub Pages
     (see PAGE_URL / PAGE_PATH). Plain HTML/CSS/JS, no build step, no
     external libraries, so it keeps working with nothing to maintain.
@@ -338,8 +351,10 @@ def render_listing_page(this_week, upcoming, borderline, week_of, sources_used, 
     ("not for me"). Picks and dismissals are remembered per-week in the
     browser's local storage, so reloading the page during the week doesn't
     lose progress. "Email my picks" builds a plain-text summary of the
-    checked items and hands off to the browser's own mail client, same
-    inbox Quest Board already watches, no new integration needed."""
+    checked items and hands off to the browser's own mail client, addressed
+    to both Gmail accounts (mailto_recipients is comma-separated for the
+    link itself; display_recipients is the same list written out for
+    people, "X and Y" instead of "X,Y")."""
 
     def row(item, idx):
         where = item["company"] or item["location"] or item["source"]
@@ -416,14 +431,14 @@ def render_listing_page(this_week, upcoming, borderline, week_of, sources_used, 
 </div>
 
 <footer>
-Sources: {sources_used}. Check things off as you go, they'll stay checked if you come back to this page later this week. "Email my picks" sends a plain list to {recipient_address}, the same inbox Quest Board reads from.
+Sources: {sources_used}. Check things off as you go, they'll stay checked if you come back to this page later this week. "Email my picks" sends a plain list to {display_recipients}.
 </footer>
 </div>
 
 <script>
 (function() {{
   var weekKey = "digest-{week_of}".replace(/[^a-zA-Z0-9]/g, "-");
-  var recipient = {recipient_address!r};
+  var recipient = {mailto_recipients!r};
 
   function storageKey(el) {{ return weekKey + ":" + el.dataset.key; }}
 
@@ -473,9 +488,11 @@ Sources: {sources_used}. Check things off as you go, they'll stay checked if you
 </body>
 </html>"""
 
+
 def html_attr(s):
     """Minimal escaping for values placed inside HTML attributes."""
     return (s or "").replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;")
+
 
 def send_email(html, subject):
     # GMAIL_ADDRESS is the sending account only, it logs in and sends but
@@ -496,6 +513,7 @@ def send_email(html, subject):
         server.login(sender_address, app_password)
         server.send_message(msg)
     log(f"Sent digest from {sender_address} to {recipient_address}")
+
 
 def main():
     today = date.today()
@@ -519,9 +537,16 @@ def main():
     upcoming = [i for i in kept if not in_this_week(i)]
 
     sources_used = ", ".join(sorted(set(i["source"] for i in all_listings))) or "no sources"
-    recipient_address = os.environ["GMAIL_RECIPIENT"]
 
-    page_html = render_listing_page(this_week, upcoming, borderline, week_of, sources_used, recipient_address)
+    # The pick-list page's "Email my picks" button addresses both Gmail
+    # accounts (the one Quest Board watches, and the sending account itself),
+    # reusing the two secrets already set up for the weekly digest send
+    # rather than needing a new one just for this.
+    pick_addresses = [os.environ["GMAIL_RECIPIENT"], os.environ["GMAIL_ADDRESS"]]
+    mailto_recipients = ",".join(pick_addresses)
+    display_recipients = " and ".join(pick_addresses)
+
+    page_html = render_listing_page(this_week, upcoming, borderline, week_of, sources_used, mailto_recipients, display_recipients)
     os.makedirs(os.path.dirname(PAGE_PATH), exist_ok=True)
     with open(PAGE_PATH, "w", encoding="utf-8") as f:
         f.write(page_html)
@@ -530,6 +555,7 @@ def main():
     email_html = render_html(this_week, upcoming, borderline, week_of, sources_used)
     subject = f"Audition Digest — week of {week_of}"
     send_email(email_html, subject)
+
 
 if __name__ == "__main__":
     main()
