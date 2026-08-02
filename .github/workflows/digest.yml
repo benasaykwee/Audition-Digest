@@ -41,3 +41,22 @@ jobs:
           git add docs/index.html
           git diff --staged --quiet && echo "No changes to the page, skipping commit" || git commit -m "Update pick-list page"
           git push
+
+      - name: Build digest.json for Quest Board
+        run: python build_digest_json.py
+
+      - name: Push digest.json to Quest Board
+        env:
+          QUEST_BOARD_TOKEN: ${{ secrets.QUEST_BOARD_TOKEN }}
+        run: |
+          if [ -z "$QUEST_BOARD_TOKEN" ]; then
+            echo "QUEST_BOARD_TOKEN secret not set yet — skipping Quest Board digest update."
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${QUEST_BOARD_TOKEN}@github.com/benasaykwee/quest-board.git" qb
+          cp digest-out.json qb/public/digest.json
+          cd qb
+          git config user.name "audition-digest-bot"
+          git config user.email "actions@github.com"
+          git add public/digest.json
+          git diff --staged --quiet && echo "Digest unchanged, skipping commit" || (git commit -m "Auto-update digest.json" && git push)
