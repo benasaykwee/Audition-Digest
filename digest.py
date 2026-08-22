@@ -99,6 +99,14 @@ def log(msg):
     print(f"[digest] {msg}", file=sys.stderr)
 
 
+def norm_key(s):
+    """Strips everything but letters and numbers, lowercased, for use in
+    dedup keys only (never for display). Without this, "Traguna
+    Productions, Corp." and "Traguna Productions, Corp" read as two
+    different companies and the same posting gets listed twice."""
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
 def fetch_broadwayworld():
     """Returns a list of listing dicts pulled from BroadwayWorld's audition board."""
     resp = requests.get(BROADWAYWORLD_URL, headers=HEADERS, timeout=30)
@@ -144,7 +152,7 @@ def fetch_broadwayworld():
         # Belt-and-suspenders: also dedup by the raw href. If BroadwayWorld
         # ever changes the CTA link's wording, two links sharing a URL still
         # won't produce two listings.
-        key = (title, company, role, deadline)
+        key = (norm_key(title), norm_key(company), norm_key(role), deadline)
         if key in seen or href in seen_urls:
             continue
         seen.add(key)
@@ -175,7 +183,15 @@ def fetch_playbill():
 
     cat_pattern = "|".join(re.escape(c) for c in PLAYBILL_CATEGORIES)
     listings = []
-    for link in soup.find_all("a", href=re.compile(r"^https?://playbill\.com/job/")):
+    seen_urls = set()
+    # Matches both the absolute form (https://playbill.com/job/...) and the
+    # relative form (/job/...). The original pattern only accepted absolute
+    # URLs, which is the most likely reason Playbill silently vanished from
+    # the digest between 2026-08-01 and 2026-08-16: no error, no failed run,
+    # just zero matches. Accepting both shapes means a future switch back
+    # doesn't break it again either.
+    job_link = re.compile(r"^(?:https?://(?:www\.)?playbill\.com)?/job/")
+    for link in soup.find_all("a", href=job_link):
         text = link.get_text(" ", strip=True)
         if not text:
             continue
@@ -195,6 +211,14 @@ def fetch_playbill():
             rest = rest[len("Paid"):].strip()
         rest = re.sub(r"\s+US$", "", rest).strip()  # trailing country code, not meaningful content
 
+        # Relative hrefs need the domain put back on, or the digest's links
+        # would point nowhere.
+        href = link.get("href", "")
+        url = href if href.startswith("http") else "https://playbill.com" + href
+        if url in seen_urls:
+            continue  # same posting linked twice on the page
+        seen_urls.add(url)
+
         # Playbill's listing text flattens title, company, and city into one
         # run with no reliable delimiter between them (unlike BroadwayWorld,
         # which uses a real "·" separator). Splitting company/location out
@@ -209,7 +233,7 @@ def fetch_playbill():
             "role": "Performer" + (" (Paid)" if paid else ""),
             "location": "",
             "deadline": deadline,
-            "url": link.get("href", ""),
+            "url": url,
             "source": "Playbill",
         })
 
@@ -533,7 +557,20 @@ def main():
     week_of = today.strftime("%B %d, %Y")
     cutoff = today + timedelta(days=6)  # "this week" window
 
-    all_listings = fetch_broadwayworld() + fetch_playbill()
+    bww = fetch_broadwayworld()
+    playbill = fetch_playbill()
+
+    # A feed returning zero listings is almost always a parser that's gone
+    # stale against a site redesign, not a genuinely empty board. It doesn't
+    # raise, doesn't fail the run, and the digest still sends, so without
+    # this line it goes unnoticed for weeks (which is exactly what happened
+    # to Playbill in August 2026). Loud in the log, harmless to the run.
+    for name, items in (("BroadwayWorld", bww), ("Playbill", playbill)):
+        if not items:
+            log(f"WARNING: {name} returned 0 listings. The site's markup has "
+                f"probably changed and its parser needs a look.")
+
+    all_listings = bww + playbill
     all_listings = drop_expired(all_listings, today)
     log(f"{len(all_listings)} performer listings after pre-filter and expiry check")
 
