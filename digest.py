@@ -175,6 +175,25 @@ def fetch_broadwayworld():
     return listings
 
 
+def playbill_audition_date(title):
+    """Playbill puts the actual audition date inside the listing title, in
+    MM.DD.YY form inside parentheses, e.g.
+        "Faydra - NYC EPA (08.27.26)"
+        "Artistry Theatre 2027 Season - EPA (08.31.26) & (09.01.26)"
+    Returns the LATEST such date as MM/DD/YYYY (an audition spanning two days
+    isn't past until the second one is), or "" when the title has no date at
+    all, which is common for open-ended postings. Returning "" is deliberate:
+    downstream, a listing with no deadline is kept rather than dropped, since
+    "no stated closing date" should not mean "already closed"."""
+    found = []
+    for mm, dd, yy in re.findall(r"\((\d{1,2})\.(\d{1,2})\.(\d{2})\)", title):
+        try:
+            found.append(date(2000 + int(yy), int(mm), int(dd)))
+        except ValueError:
+            continue  # e.g. a version number in parens that isn't a real date
+    return max(found).strftime("%m/%d/%Y") if found else ""
+
+
 def fetch_playbill():
     """Returns a list of listing dicts pulled from Playbill's job board, Performer category only."""
     resp = requests.get(PLAYBILL_URL, headers=HEADERS, timeout=30)
@@ -196,8 +215,14 @@ def fetch_playbill():
         if not text:
             continue
 
+        # IMPORTANT: the trailing date on a Playbill row is the date the
+        # posting went up, NOT a deadline. Treating it as a deadline is what
+        # made Playbill appear to vanish from the digest in August 2026:
+        # every listing posted before today got thrown away by drop_expired(),
+        # silently, with no error. Captured as "posted" and used only for
+        # staleness, never for expiry.
         date_match = re.search(r"\d{2}/\d{2}/\d{4}$", text)
-        deadline = date_match.group(0) if date_match else ""
+        posted = date_match.group(0) if date_match else ""
         body = text[: date_match.start()].strip() if date_match else text
 
         cat_match = re.match(rf"({cat_pattern})", body)
@@ -232,7 +257,8 @@ def fetch_playbill():
             "company": "",
             "role": "Performer" + (" (Paid)" if paid else ""),
             "location": "",
-            "deadline": deadline,
+            "deadline": playbill_audition_date(rest),
+            "posted": posted,
             "url": url,
             "source": "Playbill",
         })
@@ -267,12 +293,24 @@ def fetch_playbill():
     return listings
 
 
+STALE_AFTER_DAYS = 45  # how long a Playbill posting stays worth showing
+
+
 def drop_expired(listings, today):
     kept = []
     for item in listings:
         d = parse_date(item["deadline"])
         if d and d < today:
             continue  # deadline already passed, not actionable
+
+        # Playbill rows carry a posting date instead of a deadline. It must
+        # never be used for expiry (that bug hid the whole feed for weeks),
+        # but a listing put up months ago and still undated isn't useful
+        # either, so it's used purely as a staleness cutoff.
+        posted = parse_date(item.get("posted", ""))
+        if posted and (today - posted).days > STALE_AFTER_DAYS:
+            continue
+
         kept.append(item)
     return kept
 
@@ -355,7 +393,15 @@ def meta_line(item):
     parts = [item["role"]]
     if item["location"]:
         parts.append(item["location"])
-    parts.append(f"Deadline {item['deadline']}" if item["deadline"] else "No deadline listed")
+    # Prefer a real deadline. Failing that, a Playbill posting date is still
+    # useful context (how fresh is this?), and is labelled as such so it can't
+    # be misread as a closing date the way the code itself once misread it.
+    if item["deadline"]:
+        parts.append(f"Deadline {item['deadline']}")
+    elif item.get("posted"):
+        parts.append(f"Posted {item['posted']}")
+    else:
+        parts.append("No date listed")
     parts.append(item["source"])
     return " &middot; ".join(parts)
 
