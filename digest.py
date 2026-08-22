@@ -238,6 +238,32 @@ def fetch_playbill():
         })
 
     log(f"Playbill: parsed {len(listings)} performer-category listings")
+
+    if not listings:
+        # Diagnostics, only when the parse comes back empty. Playbill went
+        # silent sometime between 2026-08-01 and 2026-08-16 and a first fix
+        # attempt (accepting relative hrefs) did not bring it back, so rather
+        # than guessing a third time these lines report what the server
+        # actually handed us. Reading them:
+        #   tiny byte count / title like "Just a moment" -> bot wall or
+        #     challenge page returned with a 200, not real content
+        #   normal byte count but 0 job anchors -> the list is now rendered
+        #     by JavaScript, which a plain fetch can't see
+        #   job anchors present -> markup is fine, the text/category parsing
+        #     below them is what needs updating, and the samples show how
+        anchors = soup.find_all("a")
+        job_hrefs = [a.get("href", "") for a in anchors if "/job/" in (a.get("href") or "")]
+        title_tag = soup.title.string.strip() if soup.title and soup.title.string else "(no title)"
+        log(f"Playbill diagnostics: HTTP {resp.status_code}, {len(resp.text)} bytes, "
+            f"{len(anchors)} anchors total, {len(job_hrefs)} with '/job/' in the href")
+        log(f"Playbill diagnostics: page title {title_tag!r}")
+        for h in job_hrefs[:3]:
+            match = [a for a in anchors if a.get("href") == h]
+            sample = match[0].get_text(" ", strip=True)[:160] if match else ""
+            log(f"Playbill diagnostics: href={h!r} text={sample!r}")
+        if not job_hrefs:
+            log(f"Playbill diagnostics: first 300 chars of response {resp.text[:300]!r}")
+
     return listings
 
 
